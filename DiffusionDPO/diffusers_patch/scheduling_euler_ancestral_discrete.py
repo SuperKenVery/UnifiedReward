@@ -22,17 +22,14 @@ import numpy as np
 import torch
 
 from diffusers.configuration_utils import ConfigMixin, register_to_config
-from diffusers.utils import BaseOutput, logging
-from diffusers.utils.torch_utils import randn_tensor
+from diffusers.utils import BaseOutput, logging, randn_tensor
 from diffusers.schedulers.scheduling_utils import KarrasDiffusionSchedulers, SchedulerMixin
-
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
 
 @dataclass
-# Copied from diffusers.schedulers.scheduling_ddpm.DDPMSchedulerOutput with DDPM->EulerAncestralDiscrete
-class EulerAncestralDiscreteSchedulerOutput(BaseOutput):
+class EulerAncestralDiscreteSchedulerOutputWithLogprob(BaseOutput):
     """
     Output class for the scheduler's `step` function output.
 
@@ -52,23 +49,23 @@ class EulerAncestralDiscreteSchedulerOutput(BaseOutput):
     logprob: Optional[torch.Tensor] = None
 
 def step_with_logprob(
-    self: EulerAncestralDiscreteScheduler,
-    model_output: torch.Tensor,
-    timestep: Union[float, torch.Tensor],
-    sample: torch.Tensor,
+    self,
+    model_output: torch.FloatTensor,
+    timestep: Union[float, torch.FloatTensor],
+    sample: torch.FloatTensor,
     generator: Optional[torch.Generator] = None,
     return_dict: bool = True,
-) -> Union[EulerAncestralDiscreteSchedulerOutput, Tuple]:
+) -> Union[EulerAncestralDiscreteSchedulerOutputWithLogprob, Tuple]:
     """
     Predict the sample from the previous timestep by reversing the SDE. This function propagates the diffusion
     process from the learned model outputs (most often the predicted noise).
 
     Args:
-        model_output (`torch.Tensor`):
+        model_output (`torch.FloatTensor`):
             The direct output from learned diffusion model.
         timestep (`float`):
             The current discrete timestep in the diffusion chain.
-        sample (`torch.Tensor`):
+        sample (`torch.FloatTensor`):
             A current instance of a sample created by the diffusion process.
         generator (`torch.Generator`, *optional*):
             A random number generator.
@@ -80,12 +77,15 @@ def step_with_logprob(
         [`~schedulers.scheduling_euler_ancestral_discrete.EulerAncestralDiscreteSchedulerOutput`] or `tuple`:
             If return_dict is `True`,
             [`~schedulers.scheduling_euler_ancestral_discrete.EulerAncestralDiscreteSchedulerOutput`] is returned,
-            otherwise a tuple is returned where the first element is the sample tensor, second is the predicted
-            original sample, and third is the log probability of the ancestral sampling step.
+            otherwise a tuple is returned where the first element is the sample tensor.
 
     """
 
-    if isinstance(timestep, (int, torch.IntTensor, torch.LongTensor)):
+    if (
+        isinstance(timestep, int)
+        or isinstance(timestep, torch.IntTensor)
+        or isinstance(timestep, torch.LongTensor)
+    ):
         raise ValueError(
             (
                 "Passing integer indices (e.g. from `enumerate(timesteps)`) as timesteps to"
@@ -100,13 +100,11 @@ def step_with_logprob(
             "See `StableDiffusionPipeline` for a usage example."
         )
 
-    if self.step_index is None:
-        self._init_step_index(timestep)
+    if isinstance(timestep, torch.Tensor):
+        timestep = timestep.to(self.timesteps.device)
 
-    sigma = self.sigmas[self.step_index]
-
-    # Upcast to avoid precision issues when computing prev_sample
-    sample = sample.to(torch.float32)
+    step_index = (self.timesteps == timestep).nonzero().item()
+    sigma = self.sigmas[step_index]
 
     # 1. compute predicted original sample (x_0) from sigma-scaled predicted noise
     if self.config.prediction_type == "epsilon":
@@ -121,8 +119,8 @@ def step_with_logprob(
             f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, or `v_prediction`"
         )
 
-    sigma_from = self.sigmas[self.step_index]
-    sigma_to = self.sigmas[self.step_index + 1]
+    sigma_from = self.sigmas[step_index]
+    sigma_to = self.sigmas[step_index + 1]
     sigma_up = (sigma_to**2 * (sigma_from**2 - sigma_to**2) / sigma_from**2) ** 0.5
     sigma_down = (sigma_to**2 - sigma_up**2) ** 0.5
 
@@ -136,38 +134,11 @@ def step_with_logprob(
     device = model_output.device
     noise = randn_tensor(model_output.shape, dtype=model_output.dtype, device=device, generator=generator)
 
-    # Calculate logprob for the ancestral sampling step
-    # The noise follows a multivariate Gaussian: N(0, sigma_up^2 * I)
-    # Log probability density: -0.5 * ||noise||^2 / sigma_up^2 - 0.5 * D * log(2π * sigma_up^2)
-    if sigma_up > 0:
-        # Calculate the squared L2 norm of noise
-        noise_norm_sq = torch.sum(noise ** 2, dim=list(range(1, noise.ndim)), keepdim=True)
-        # Number of dimensions (total elements per sample)
-        D = torch.tensor(noise.numel() // noise.shape[0], dtype=noise.dtype, device=device)
-        # Log probability density
-        logprob = -0.5 * noise_norm_sq / (sigma_up ** 2) - 0.5 * D * torch.log(2 * math.pi * sigma_up ** 2)
-        # Sum over spatial dimensions to get logprob per sample
-        logprob = torch.sum(logprob, dim=list(range(1, logprob.ndim)))
-    else:
-        # Deterministic case (no noise added)
-        # probability=1, log(1) = 0
-        logprob = torch.zeros(noise.shape[0], dtype=noise.dtype, device=device)
-
     prev_sample = prev_sample + noise * sigma_up
 
-    # Cast sample back to model compatible dtype
-    prev_sample = prev_sample.to(model_output.dtype)
-
-    # upon completion increase step index by one
-    self._step_index += 1
-
     if not return_dict:
-        return (
-            prev_sample,
-            pred_original_sample,
-            logprob,
-        )
+        return (prev_sample,)
 
     return EulerAncestralDiscreteSchedulerOutput(
-        prev_sample=prev_sample, pred_original_sample=pred_original_sample, logprob=logprob
+        prev_sample=prev_sample, pred_original_sample=pred_original_sample
     )
