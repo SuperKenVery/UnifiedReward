@@ -1,0 +1,25 @@
+[workspace]
+authors = ["ken <1610057945@qq.com>"]
+channels = ["conda-forge"]
+name = "UnifiedReward"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+[dependencies]
+python = "3.10.*"
+ninja = ">=1.13.1,<2"
+gcc = ">=12,<13"
+gxx = ">=12,<13"
+
+[pypi-dependencies]
+llava = { path = ".", editable = true, extras = ["train"] }
+setuptools = ">=80.9.0, <81"
+packaging = ">=25.0, <26"
+flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8+cu122torch2.1cxx11abiFALSE-cp310-cp310-linux_x86_64.whl" }
+
+[pypi-options]
+no-build-isolation = ["flash-attn"]
+
+[system-requirements]
+cuda = "12"
