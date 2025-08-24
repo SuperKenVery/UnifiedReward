@@ -19,7 +19,9 @@ import os
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import torch
+import numpy as np
 from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
+from dataclasses import dataclass
 
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.loaders import FromSingleFileMixin, LoraLoaderMixin, TextualInversionLoaderMixin
@@ -32,6 +34,7 @@ from diffusers.models.attention_processor import (
 )
 from diffusers.schedulers import KarrasDiffusionSchedulers
 from diffusers.utils import (
+    BaseOutput,
     is_accelerate_available,
     is_accelerate_version,
     is_invisible_watermark_available,
@@ -42,7 +45,26 @@ from diffusers.utils import (
 from diffusers.pipelines.pipeline_utils import DiffusionPipeline
 from diffusers.pipelines.stable_diffusion_xl import StableDiffusionXLPipelineOutput
 
+from scheduling_euler_ancestral_discrete import step_with_logprob
+
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
+
+
+@dataclass
+class StableDiffusionXLPipelineOutputWithLogprob(BaseOutput):
+    """
+    Output class for Stable Diffusion XL pipelines with logprob support.
+
+    Args:
+        images (`List[PIL.Image.Image]` or `np.ndarray`)
+            List of denoised PIL images of length `batch_size` or numpy array of shape `(batch_size, height, width,
+            num_channels)`. PIL images or numpy array present the denoised images of the diffusion pipeline.
+        logprobs (`torch.Tensor`):
+            Log probabilities of the generated images. Shape: (batch_size,)
+    """
+
+    images: Union[List["PIL.Image.Image"], np.ndarray]
+    logprobs: Optional[torch.Tensor] = None
 
 EXAMPLE_DOC_STRING = """
     Examples:
@@ -79,7 +101,7 @@ def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
 
 @torch.no_grad()
 @replace_example_docstring(EXAMPLE_DOC_STRING)
-def __call__(
+def sdxl_call_with_logprobs(
     self,
     prompt: Union[str, List[str]] = None,
     prompt_2: Optional[Union[str, List[str]]] = None,
@@ -314,6 +336,9 @@ def __call__(
     # 8. Denoising loop
     num_warmup_steps = max(len(timesteps) - num_inference_steps * self.scheduler.order, 0)
 
+    # Initialize total logprob for tracking the probability of the entire generation
+    total_logprob = torch.zeros(batch_size * num_images_per_prompt, device=device, dtype=prompt_embeds.dtype)
+
     # 7.1 Apply denoising_end
     if denoising_end is not None and type(denoising_end) == float and denoising_end > 0 and denoising_end < 1:
         discrete_timestep_cutoff = int(
@@ -353,7 +378,12 @@ def __call__(
                 noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=guidance_rescale)
 
             # compute the previous noisy sample x_t -> x_t-1
-            latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+            # latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+            step_output = step_with_logprob(self.scheduler, noise_pred, t, latents, **extra_step_kwargs, return_dict=False)
+            latents, _pred_original_sample, logprob = step_output
+
+            # Accumulate the logprob for the total generation probability
+            total_logprob += logprob
 
             # call the callback, if provided
             if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
@@ -383,17 +413,41 @@ def __call__(
         self.final_offload_hook.offload()
 
     if not return_dict:
-        return (image,)
+        return (image, total_logprob)
 
-    return StableDiffusionXLPipelineOutput(images=image)
+    return StableDiffusionXLPipelineOutputWithLogprob(images=image, logprobs=total_logprob)
 
 if __name__ == "__main__":
-    pipeline = StableDiffusionXLPipeline.from_pretrained("stabilityai/sdxl-turbo")
-    generated = sdxl_forward_with_logprobs(
+    import random
+    from diffusers.pipelines import StableDiffusionXLPipeline
+    torch.manual_seed(0)
+
+    # Make it not deterministic. Same as data_generation.py.
+    seed = random.randint(0, 1000000)
+    generator = torch.Generator("cuda").manual_seed(seed+0)
+
+    pipeline = StableDiffusionXLPipeline.from_pretrained("stabilityai/sdxl-turbo").to("cuda")
+    print("Sigmas:", pipeline.scheduler.sigmas)
+    generated = sdxl_call_with_logprobs(
         pipeline,
         prompt="A cat walking in a china street",
-        num_inference_steps=1,
-        guidance_scale=0
+        num_inference_steps=2,
+        guidance_scale=0,
+        return_dict=False,
+        generator=generator
     )
 
-    image, log_probs = generated
+    images, log_probs = generated
+    for image in images:
+        import subprocess
+        import io
+
+        # Convert PIL image to bytes
+        img_buffer = io.BytesIO()
+        image.save(img_buffer, format='PNG')
+        img_bytes = img_buffer.getvalue()
+
+        # Pipe to wezterm imgcat
+        process = subprocess.Popen(['wezterm', 'imgcat'], stdin=subprocess.PIPE)
+        process.communicate(input=img_bytes)
+    print("LogProbs:", log_probs)

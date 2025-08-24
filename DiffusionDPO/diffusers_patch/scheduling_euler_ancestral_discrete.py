@@ -136,9 +136,29 @@ def step_with_logprob(
 
     prev_sample = prev_sample + noise * sigma_up
 
-    if not return_dict:
-        return (prev_sample,)
+    # Calculate logprob of the reverse diffusion transition x_t -> x_{t-1}
+    # The transition follows a Gaussian distribution N(mean, sigma_up^2 * I)
+    # where mean = sample + derivative * dt
+    print(f"step_index={step_index}, sigma_up: {sigma_up}, sigma_down: {sigma_down}, sigma_from: {sigma_from}, sigma_to: {sigma_to}")
+    if sigma_up > 0:
+        # Mean of the transition distribution (deterministic part)
+        mean = sample + derivative * dt
 
-    return EulerAncestralDiscreteSchedulerOutput(
-        prev_sample=prev_sample, pred_original_sample=pred_original_sample
+        # Log probability of prev_sample under Gaussian N(mean, sigma_up^2 * I)
+        diff = prev_sample - mean
+        diff_norm_sq = torch.sum(diff**2, dim=tuple(range(1, diff.ndim)), keepdim=True)
+        num_elements = torch.prod(torch.tensor(diff.shape[1:], device=device, dtype=torch.float32))
+        logprob = -0.5 * diff_norm_sq / (sigma_up**2) - 0.5 * num_elements * math.log(2 * math.pi) - num_elements * math.log(sigma_up)
+        # Sum over spatial dimensions to get per-sample logprob
+        logprob = torch.sum(logprob, dim=tuple(range(1, logprob.ndim)))
+    else:
+        # Deterministic step, infinite probability density at the exact point
+        # In practice, we can set this to 0 (log(1) = 0) for the deterministic case
+        logprob = torch.zeros(sample.shape[0], device=device, dtype=sample.dtype)
+
+    if not return_dict:
+        return (prev_sample, pred_original_sample, logprob)
+
+    return EulerAncestralDiscreteSchedulerOutputWithLogprob(
+        prev_sample=prev_sample, pred_original_sample=pred_original_sample, logprob=logprob
     )
