@@ -17,6 +17,7 @@ import re
 import json
 from random import sample
 
+
 warnings.filterwarnings("ignore")
 
 model_name = "llava_qwen"
@@ -24,8 +25,9 @@ device = "cuda"
 device_map = "auto"
 
 # reward model
-pretrained = "/path/to/reward_model"
-tokenizer, model, image_processor, max_length = load_pretrained_model(pretrained, None, model_name, device_map=device_map)  # Add any other thing you want to pass in llava_model_args
+pretrained = "CodeGoat24/UnifiedReward-7b"
+revision = "0958d1917a4c096b265c685e046ced33fcb09a7c"  # Before 15 Apr "Update". We need reproduction, MAN!
+tokenizer, model, image_processor, max_length = load_pretrained_model(pretrained, None, model_name, device_map=device_map, revision=revision)  # Add any other thing you want to pass in llava_model_args
 model.eval()
 
 save_path = './turbo_dpo_dataset/dpo_data.json'
@@ -75,7 +77,7 @@ def pair_rank(prompt, image1, image2):
     else:
         chosen = image1
         rejected = image2
-    
+
     return chosen, rejected
 
 
@@ -89,7 +91,7 @@ def point_score(prompt, chosen_list, rejected_list):
         conv_template = "qwen_1_5"  # Make sure you use correct chat template for different models
 
         question = f'<image>\nYou are given a text caption and a generated image based on that caption. Your task is to evaluate this image based on two key criteria:\n1. Alignment with the Caption: Assess how well this image aligns with the provided caption. Consider the accuracy of depicted objects, their relationships, and attributes as described in the caption.\n2. Overall Image Quality: Examine the visual quality of this image, including clarity, detail preservation, color accuracy, and overall aesthetic appeal.\nExtract key elements from the provided text caption, evaluate their presence in the generated image using the format: \'element (type): value\' (where value=0 means not generated, and value=1 means generated), and assign a score from 1 to 10 after \'Final Score:\'.\nYour task is provided as follows:\nText Caption: [{prompt}]'
-        
+
         conv = copy.deepcopy(conv_templates[conv_template])
         conv.append_message(conv.roles[0], question)
         conv.append_message(conv.roles[1], None)
@@ -125,7 +127,7 @@ def point_score(prompt, chosen_list, rejected_list):
         conv_template = "qwen_1_5"  # Make sure you use correct chat template for different models
 
         question = f'<image>\nYou are given a text caption and a generated image based on that caption. Your task is to evaluate this image based on two key criteria:\n1. Alignment with the Caption: Assess how well this image aligns with the provided caption. Consider the accuracy of depicted objects, their relationships, and attributes as described in the caption.\n2. Overall Image Quality: Examine the visual quality of this image, including clarity, detail preservation, color accuracy, and overall aesthetic appeal.\nExtract key elements from the provided text caption, evaluate their presence in the generated image using the format: \'element (type): value\' (where value=0 means not generated, and value=1 means generated), and assign a score from 1 to 10 after \'Final Score:\'.\nYour task is provided as follows:\nText Caption: [{prompt}]'
-        
+
         conv = copy.deepcopy(conv_templates[conv_template])
         conv.append_message(conv.roles[0], question)
         conv.append_message(conv.roles[1], None)
@@ -195,7 +197,7 @@ for i in tqdm.trange(len(dataset)):
 
     chosen.save(os.path.join(save_image_path, f"image_{i}_chosen.png"))
     rejected.save(os.path.join(save_image_path, f"image_{i}_rejected.png"))
-    
+
 
     data['jpg_0'] = f'image_{i}_chosen.png'
     data['jpg_1'] = f'image_{i}_rejected.png'

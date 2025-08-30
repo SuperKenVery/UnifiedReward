@@ -20,5 +20,4 @@ accelerate launch train.py \
   --checkpointing_steps 10 \
   --beta_dpo 5000 \
   --sdxl --resolution 512 --proportion_empty_prompts 0 \
-  --output_dir="turbo-trial-beta5k-lr1e-8-bs32-accu16-warmup5"
-
+  --output_dir="try-reproduce-1"
