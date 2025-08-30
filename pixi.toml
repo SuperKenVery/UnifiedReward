@@ -17,7 +17,7 @@ llava = { path = ".", editable = true, extras = ["train"] }
 setuptools = ">=80.9.0, <81"
 packaging = ">=25.0, <26"
 flash-attn = { url = "https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8+cu122torch2.1cxx11abiFALSE-cp310-cp310-linux_x86_64.whl" }
-requests = { version = "==2.32.5", extras = [ "socks" ] }
+requests = { version = "==2.32.5", extras = ["socks"] }
 
 [pypi-options]
 no-build-isolation = ["flash-attn"]
@@ -42,7 +42,8 @@ xformers = "*"
 hpsv2 = "*"
 openai-clip = "==1.0.1"
 huggingface_hub = "==0.25.2"
-requests = { version = ">=2.19.0, <2.20.0", extras = [ "socks" ] }
+requests = { version = ">=2.19.0, <2.20.0", extras = ["socks"] }
+remote_pdb = ">=2.1.0, <2.2"
 
 [environments]
 diffdpo = { features = ["diffdpo"], no-default-feature = true }

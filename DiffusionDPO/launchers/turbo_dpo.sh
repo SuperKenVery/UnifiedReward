@@ -10,7 +10,7 @@ accelerate launch train.py \
   --pretrained_model_name_or_path=$MODEL_NAME \
   --pretrained_vae_model_name_or_path=$VAE \
   --dataset_name=$DATASET_NAME \
-  --train_batch_size=32 \
+  --train_batch_size=16 \
   --dataloader_num_workers=0 \
   --gradient_accumulation_steps=16 \
   --max_train_steps=20 \

@@ -703,7 +703,6 @@ def main():
             "prompt": Value("string"),
         })
         dataset = load_dataset("json", data_files=json_path, features=features)
-        print(dataset)
     else:
         data_files = {}
         if args.train_data_dir is not None:
