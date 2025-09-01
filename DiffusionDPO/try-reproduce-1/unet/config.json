@@ -1,7 +1,7 @@
 {
   "_class_name": "UNet2DConditionModel",
   "_diffusers_version": "0.20.0",
-  "_name_or_path": "stabilityai/sdxl-turbo",
+  "_name_or_path": "try-reproduce-1/checkpoint-20",
   "act_fn": "silu",
   "addition_embed_type": "text_time",
   "addition_embed_type_num_heads": 64,
