@@ -43,7 +43,7 @@ hpsv2 = "*"
 openai-clip = "==1.0.1"
 huggingface_hub = "==0.25.2"
 requests = { version = ">=2.19.0, <2.20.0", extras = ["socks"] }
-remote_pdb = ">=2.1.0, <2.2"
+fpdb = { git = "https://github.com/Lightning-AI/forked-pdb" }
 
 [environments]
 diffdpo = { features = ["diffdpo"], no-default-feature = true }

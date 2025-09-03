@@ -22,6 +22,8 @@ import random
 import shutil
 import sys
 from pathlib import Path
+from fpdb import ForkedPdb
+pdb = ForkedPdb()
 
 import accelerate
 import datasets
@@ -202,7 +204,7 @@ def parse_args():
     parser.add_argument(
         "--max_train_steps",
         type=int,
-        default=2000,
+        default=None,
         help="Total number of training steps to perform.  If provided, overrides num_train_epochs.",
     )
     parser.add_argument(
@@ -264,6 +266,7 @@ def parse_args():
     parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
     parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
     parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer")
+    parser.add_argument("--alpha_epsilon", type=float, default=1e-05, help="Epsilon value for calculating alpha in my improved version of DPO")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument(
         "--hub_model_id",
@@ -798,6 +801,8 @@ def main():
                 combined_im = torch.cat(im_tup, dim=0) # no batch dim
                 combined_pixel_values.append(combined_im)
             examples["pixel_values"] = combined_pixel_values
+            examples["chosen_score"] = torch.tensor([int(score) for score in examples['chosen_score']])
+            examples["rejected_score"] = torch.tensor([int(score) for score in examples['rejected_score']])
             # SDXL takes raw prompts
             if not args.sdxl: examples["input_ids"] = tokenize_captions(examples)
             return examples
@@ -811,6 +816,9 @@ def main():
                 return_d["caption"] = [example["caption"] for example in examples]
             else:
                 return_d["input_ids"] = torch.stack([example["input_ids"] for example in examples])
+
+            return_d["chosen_scores"] = torch.stack([example["chosen_score"] for example in examples])
+            return_d["rejected_scores"] = torch.stack([example["rejected_score"] for example in examples])
 
             if args.choice_model:
                 # If using AIF then deliver image data for choice model to determine if should flip pixel values
@@ -1152,11 +1160,15 @@ def main():
                         ref_diff = ref_losses_w - ref_losses_l
                         raw_ref_loss = ref_losses.mean()
 
+                    reward_w, reward_l = batch['chosen_scores'], batch['rejected_scores']
+                    alpha_raw = ( (torch.log(reward_w) - torch.log(reward_l)) - (ref_losses_w - ref_losses_l) )
+                    alpha = torch.abs(alpha_raw) + args.alpha_epsilon
                     # -0.5 because log P(x) = -0.5 MSELoss(a, b)
-                    scale_term = -0.5 * args.beta_dpo
+                    scale_term = -0.5 * (1/alpha) * args.beta_dpo
                     inside_term = scale_term * (model_diff - ref_diff)
                     implicit_acc = (inside_term > 0).sum().float() / inside_term.size(0)
-                    loss = -1 * F.logsigmoid(inside_term).mean()
+                    loss = -1 * (F.logsigmoid(inside_term) + torch.log(alpha)).mean()
+                    # import remote_pdb; remote_pdb.set_trace()
                 #### END LOSS COMPUTATION ###
 
                 # Gather the losses across all processes for logging
